@@ -38,4 +38,6 @@ MVAR Studio is a lightweight C# desktop application designed for advanced editin
 Manipulating map data directly can lead to unexpected behavior. Always keep a backup of your original `.mvar` files before saving.
 
 ## 🤝 Credits
-Developed as an open-source tool for the Halo reverse engineering and modding community.
+
+- Developed as an open-source tool for the Halo reverse engineering and modding community.
+- Special thanks to **DavidJCobb** for their extensive previous research and documentation on the `.mvar` format, which was instrumental in building this tool.
