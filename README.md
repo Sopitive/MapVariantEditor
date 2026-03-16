@@ -2,7 +2,7 @@
 
 MVAR Studio is a lightweight C# desktop application designed for advanced editing of Halo Reach Forge Map Variant (`.mvar`) files. It provides a user-friendly interface to modify object transforms, team assignments, metadata, and more, which were previously limited by the in-game Forge menu.
 
-![MVAR Studio UI](https://raw.githubusercontent.com/Sopitive/MapVariantEditor/main/screenshot_preview.png) *(Placeholder if you add a screenshot)*
+![MVAR Studio UI](screenshot_preview.png)
 
 ## ✨ Key Features
 
