@@ -1,0 +1,19 @@
+# .gitignore for MVAR Studio
+
+# Visual Studio / .NET
+bin/
+obj/
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+
+# Tool generated
+build_error.txt
+*.mvar
+*.json
+!map_export.json
