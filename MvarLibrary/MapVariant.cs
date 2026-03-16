@@ -30,6 +30,7 @@ namespace MVARStudio.MvarLibrary
         public uint Unk02A4 { get; set; }
         public bool HardBoundary { get; set; }
         public bool IsCinematic { get; set; }
+        public ulong UnkHeader64 { get; set; }
 
         public static MapVariant Parse(byte[] payload)
         {
@@ -70,7 +71,7 @@ namespace MVARStudio.MvarLibrary
             }
 
             mv.Version = (byte)br.ReadBits(8);
-            br.ReadBits(64); // skip unknowns
+            mv.UnkHeader64 = br.ReadBits(64);
             mv.CanvasFoldersCount = (ushort)br.ReadBits(9);
             mv.MapId = (uint)br.ReadBits(32);
             mv.HardBoundary = br.ReadFlag();
@@ -147,7 +148,7 @@ namespace MVARStudio.MvarLibrary
             }
 
             bw.WriteBits(8, Version);
-            bw.WriteBits(64, 0); 
+            bw.WriteBits(64, UnkHeader64); 
             bw.WriteBits(9, CanvasFoldersCount);
             bw.WriteBits(32, MapId);
             bw.WriteFlag(HardBoundary);
@@ -172,7 +173,7 @@ namespace MVARStudio.MvarLibrary
 
             foreach (var obj in Objects) obj.Encode(bw, BBox);
 
-            for (int i = 0; i < CanvasFoldersCount; i++)
+            for (int i = 0; i < 256; i++)
             {
                 if (i < TypeMinMax.Count)
                 {

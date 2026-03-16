@@ -183,8 +183,18 @@ namespace MVARStudio
             {
                 _mv.Header.Title = _txtTitle.Text;
                 _mv.Header.Description = _txtDescription.Text;
+                
+                // Recalculate FileLength based on standard BLF layout
+                uint totalSize = (uint)_blf.Chunks.Sum(c => c.Size);
+                if (totalSize < 29481) totalSize = 29481;
+                _mv.Header.FileLength = totalSize;
+
                 var mvarChunk = _blf.Chunks.FirstOrDefault(c => c.Magic == "mvar");
-                mvarChunk.Payload = _mv.Encode();
+                if (mvarChunk != null)
+                {
+                    mvarChunk.Payload = _mv.Encode();
+                }
+                
                 _blf.Save(sfd.FileName);
                 MessageBox.Show("Saved successfully!");
             }
