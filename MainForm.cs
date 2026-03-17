@@ -10,15 +10,22 @@ using System.Collections.Generic;
 
 namespace MVARStudio
 {
+    public enum PhysicsType : byte { Normal = 0, Fixed = 1, Phased = 3 }
+    public enum SymmetryType : byte { Never = 0, Symmetric = 1, Asymmetric = 2, Both = 3 }
+    public enum ShapeType : byte { None = 0, Sphere = 1, Cylinder = 2, Box = 3 }
+
     public partial class MainForm : Form
     {
         private BlfFile _blf;
         private MapVariant _mv;
+        public static MapPalette CurrentPalette;
         private DataGridView _dgvObjects;
         private PropertyGrid _propGrid;
         private TextBox _txtTitle;
         private TextBox _txtDescription;
         private ToolStrip _toolStrip;
+        private ToolStripStatusLabel _lblMapStatus;
+        private string _mccPath;
 
         // Dark Theme Colors
         private static readonly Color ColorBg = Color.FromArgb(11, 13, 17);
@@ -60,6 +67,15 @@ namespace MVARStudio
             _toolStrip.Items.Add(btnMapSettings);
             this.Controls.Add(_toolStrip);
 
+            var statusStrip = new StatusStrip { BackColor = ColorSurface, ForeColor = ColorTextMuted };
+            _lblMapStatus = new ToolStripStatusLabel("No map associated") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+            statusStrip.Items.Add(_lblMapStatus);
+            this.Controls.Add(statusStrip);
+
+            _mccPath = MccLocator.FindMccPath();
+            if (_mccPath != null) _lblMapStatus.Text = "MCC Found: " + _mccPath;
+            else _lblMapStatus.Text = "MCC not found. Using fallback palettes.";
+
             var pnlHeader = new Panel { Dock = DockStyle.Top, Height = 100, Padding = new Padding(15), BackColor = ColorSurface };
             pnlHeader.Controls.Add(new Label { Text = "MAP TITLE", Location = new Point(15, 12), ForeColor = ColorAccent, Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true });
             _txtTitle = new TextBox { Location = new Point(15, 30), Width = 400, BackColor = ColorBg, ForeColor = ColorText, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10) };
@@ -79,7 +95,6 @@ namespace MVARStudio
             this.Controls.Add(split);
             split.BringToFront();
             
-            // Set distance now that we are in the Load event and the form has size
             try { split.SplitterDistance = Math.Max(100, split.Width - 350); } catch {}
 
             _dgvObjects = new DataGridView { 
@@ -104,13 +119,16 @@ namespace MVARStudio
             _dgvObjects.DefaultCellStyle.SelectionBackColor = ColorAccent;
             _dgvObjects.DefaultCellStyle.SelectionForeColor = ColorBg;
 
-            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Slot", HeaderText = "Slot", Width = 50 });
-            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TypeDisplayName", HeaderText = "Type", Width = 180 });
-            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TeamDisplayName", HeaderText = "Team", Width = 100 });
-            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PositionString", HeaderText = "Position", Width = 250, AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Slot", HeaderText = "Slot", Width = 40 });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ItemName", HeaderText = "Item Name", Width = 140, ReadOnly = true });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TypeDisplayName", HeaderText = "Type", Width = 140 });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TeamDisplayName", HeaderText = "Team", Width = 80 });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Folder", HeaderText = "Fld", Width = 35 });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "FolderItem", HeaderText = "Itm", Width = 35 });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PositionString", HeaderText = "Position", Width = 230 });
             
             _dgvObjects.SelectionChanged += (s, e) => {
-                if (_dgvObjects.SelectedRows.Count > 0) {
+                if (!_isRefreshing && _dgvObjects.SelectedRows.Count > 0) {
                     var proxy = (ObjectProxy)_dgvObjects.SelectedRows[0].DataBoundItem;
                     _propGrid.SelectedObject = proxy;
                 }
@@ -129,7 +147,6 @@ namespace MVARStudio
                 CommandsForeColor = ColorAccent
             };
             
-            // Add padding/margin around the property grid
             var pnlPropWrapper = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10, 0, 10, 10), BackColor = ColorSurface };
             pnlPropWrapper.Controls.Add(_propGrid);
             split.Panel2.Controls.Add(pnlPropWrapper);
@@ -162,17 +179,65 @@ namespace MVARStudio
                     _txtTitle.Text = _mv.Header.Title;
                     _txtDescription.Text = _mv.Header.Description;
 
+                    CurrentPalette = null;
+                    var mapInfo = ReachMaps.GetMap(_mv.MapId);
+                    
+                    string workspaceDir = @"c:\Users\Wyatt\source\repos\ReverseMe\MVARViewer\reach-mvar-viewer-js\map-data";
+                    if (!Directory.Exists(workspaceDir))
+                        workspaceDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "map-data");
+
+                    string palettePath = Path.Combine(workspaceDir, _mv.MapId.ToString(), "forge-palette.xml");
+                    
+                    if (!File.Exists(palettePath))
+                        palettePath = Path.Combine(workspaceDir, "3006", "forge-palette.xml");
+
+                    if (File.Exists(palettePath))
+                    {
+                        try { 
+                            CurrentPalette = MapPalette.LoadFromXml(_mv.MapId, palettePath); 
+                        } catch (Exception ex) {
+                            Console.WriteLine($"Error loading XML: {ex.Message}");
+                        }
+                    }
+
+                    if (mapInfo != null)
+                    {
+                        var mccPath = MccLocator.FindMccPath();
+                        string mapFile = MccLocator.GetMapFilePath(mccPath, mapInfo.InternalName);
+                        string paletteStatus = CurrentPalette != null ? $" ({CurrentPalette.Folders.Count} folders)" : " [Palette Missing]";
+                        
+                        if (mapFile != null) _lblMapStatus.Text = $"Map: {mapInfo.Name}{paletteStatus} (using {mapInfo.InternalName}.map)";
+                        else _lblMapStatus.Text = $"Map: {mapInfo.Name}{paletteStatus} (.map not found)";
+                    }
+                    else
+                    {
+                        _lblMapStatus.Text = $"Unknown Map ID: {_mv.MapId}";
+                    }
+
                     RefreshGrid();
                 }
                 catch (Exception ex) { MessageBox.Show("Error: " + ex.Message); }
             }
         }
 
+        private bool _isRefreshing = false;
         private void RefreshGrid()
         {
-            if (_mv == null) return;
-            var proxies = _mv.Objects.Where(o => o.Present).Select(o => new ObjectProxy(o, _mv)).ToList();
-            _dgvObjects.DataSource = proxies;
+            if (_mv == null || _isRefreshing) return;
+            
+            _isRefreshing = true;
+            _dgvObjects.SuspendLayout();
+            try
+            {
+                var proxies = _mv.Objects.Where(o => o.Present).Select(o => new ObjectProxy(o, _mv)).ToList();
+                _dgvObjects.DataSource = null;
+                _dgvObjects.DataSource = proxies;
+            }
+            finally
+            {
+                _dgvObjects.ResumeLayout();
+                _isRefreshing = false;
+            }
         }
 
         private void SaveMvar()
@@ -184,7 +249,6 @@ namespace MVARStudio
                 _mv.Header.Title = _txtTitle.Text;
                 _mv.Header.Description = _txtDescription.Text;
                 
-                // Recalculate FileLength based on standard BLF layout
                 uint totalSize = (uint)_blf.Chunks.Sum(c => c.Size);
                 if (totalSize < 29481) totalSize = 29481;
                 _mv.Header.FileLength = totalSize;
@@ -220,21 +284,31 @@ namespace MVARStudio
                         Author = _mv.Header.CreatedBy.Name,
                         _mv.BudgetMax,
                         _mv.BudgetSpent,
-                        Objects = _mv.Objects.Where(o => o.Present).Select(o => new {
-                            Slot = o.Slot,
-                            Folder = o.ForgeFolder,
-                            FolderItem = o.ForgeFolderItem,
-                            Position = new { X = o.Position.X, Y = o.Position.Y, Z = o.Position.Z },
-                            Yaw = o.Angle,
-                            Properties = new {
-                                MpType = o.Extra.MpType,
-                                SpawnSeq = o.Extra.SpawnSeq,
-                                RespawnTime = o.Extra.RespawnTime,
-                                Team = o.Extra.TeamRaw,
-                                Color = o.Extra.Color,
-                                Physics = (PhysicsType)(o.Extra.PlacementFlags >> 6),
-                                Symmetry = (SymmetryType)((o.Extra.PlacementFlags >> 2) & 3)
-                            }
+                        ForgeLabels = new {
+                            strings = _mv.ForgeLabels.Strings
+                        },
+                        Objects = _mv.Objects.Where(o => o.Present).Select(o => {
+                            var rot = o.GetRotationEulerDegrees();
+                            return new {
+                                Slot = o.Slot,
+                                Folder = o.ForgeFolder,
+                                FolderItem = o.ForgeFolderItem,
+                                Position = new { X = o.Position.X, Y = o.Position.Y, Z = o.Position.Z },
+                                Rotation = new { X = rot.x, Y = rot.y, Z = rot.z },
+                                Properties = new {
+                                    MpType = o.Extra.MpType,
+                                    SpawnSeq = o.Extra.SpawnSeq,
+                                    RespawnTime = o.Extra.RespawnTime,
+                                    Team = o.Extra.TeamRaw,
+                                    Color = o.Extra.Color,
+                                    Physics = (PhysicsType)(o.Extra.PlacementFlags >> 6),
+                                    Symmetry = (SymmetryType)((o.Extra.PlacementFlags >> 2) & 3),
+                                    ForgeLabelIdx = o.Extra.ForgeLabelIdx,
+                                    TeleChannel = o.Extra.TeleChannel,
+                                    TelePassability = o.Extra.TelePassability,
+                                    SpareClips = o.Extra.SpareClips
+                                }
+                            };
                         })
                     };
                     string json = JsonSerializer.Serialize(data, options);
@@ -256,10 +330,6 @@ namespace MVARStudio
         protected override void Dispose(bool disposing) { if (disposing && (components != null)) components.Dispose(); base.Dispose(disposing); }
     }
 
-    public enum PhysicsType : byte { Normal = 0, Fixed = 1, Phased = 3 }
-    public enum SymmetryType : byte { Never = 0, Symmetric = 1, Asymmetric = 2, Both = 3 }
-    public enum ShapeType : byte { None = 0, Sphere = 1, Cylinder = 2, Box = 3 }
-
     public class ObjectProxy
     {
         private ForgeObject _obj;
@@ -269,13 +339,43 @@ namespace MVARStudio
 
         [System.ComponentModel.Category("1. Identification")]
         public int Slot => _obj.Slot;
+
+        [System.ComponentModel.Category("1. Identification")]
+        [System.ComponentModel.DisplayName("Item Name")]
+        [System.ComponentModel.ReadOnly(true)]
+        public string ItemName => MainForm.CurrentPalette?.ResolveItemName(_obj.ForgeFolder, _obj.ForgeFolderItem) ?? "Unknown";
+
+        [System.ComponentModel.Category("1. Identification")]
+        [System.ComponentModel.DisplayName("Forge Palette Item")]
+        [System.ComponentModel.TypeConverter(typeof(ForgeItemConverter))]
+        [System.ComponentModel.RefreshProperties(System.ComponentModel.RefreshProperties.All)]
+        public string ForgeItem {
+            get => MainForm.CurrentPalette?.GetFullItemName(_obj.ForgeFolder, _obj.ForgeFolderItem) ?? "Unknown";
+            set {
+                if (MainForm.CurrentPalette != null) {
+                    var (f, i) = MainForm.CurrentPalette.ParseItemString(value);
+                    if (f != -1) {
+                        _obj.ForgeFolder = (ushort)f;
+                        _obj.ForgeFolderItem = (byte)i;
+                    }
+                }
+            }
+        }
         
         [System.ComponentModel.Category("1. Identification")]
-        public string Type => MP_TYPES.ContainsKey(_obj.Extra.MpType) ? MP_TYPES[_obj.Extra.MpType] : $"Type {_obj.Extra.MpType}";
+        [System.ComponentModel.TypeConverter(typeof(MpTypeConverter))]
+        public string Type {
+            get => MP_TYPES.ContainsKey(_obj.Extra.MpType) ? MP_TYPES[_obj.Extra.MpType] : $"Type {_obj.Extra.MpType}";
+            set {
+                var kv = MP_TYPES.FirstOrDefault(x => x.Value == value);
+                _obj.Extra.MpType = (byte)kv.Key;
+            }
+        }
 
         [System.ComponentModel.Category("1. Identification")]
         public ushort Folder { get => _obj.ForgeFolder; set => _obj.ForgeFolder = value; }
-
+        
+        [System.ComponentModel.DisplayName("Item")]
         [System.ComponentModel.Category("1. Identification")]
         public byte FolderItem { get => _obj.ForgeFolderItem; set => _obj.ForgeFolderItem = value; }
 
@@ -301,18 +401,9 @@ namespace MVARStudio
         public MapVariant GetMap() => _mv;
 
         [System.ComponentModel.Category("5. Specific Settings")]
-        [System.ComponentModel.Description("Used for Weapon objects.")]
         public byte SpareClips { get => _obj.Extra.SpareClips; set => _obj.Extra.SpareClips = value; }
-        
-        [System.ComponentModel.Category("5. Specific Settings")]
-        [System.ComponentModel.Description("Channel for Teleporters.")]
         public byte TeleChannel { get => _obj.Extra.TeleChannel; set => _obj.Extra.TeleChannel = value; }
-        
-        [System.ComponentModel.Category("5. Specific Settings")]
         public byte TelePassability { get => _obj.Extra.TelePassability; set => _obj.Extra.TelePassability = value; }
-        
-        [System.ComponentModel.Category("5. Specific Settings")]
-        [System.ComponentModel.Description("Index in the Named Location table.")]
         public byte LocationNameIdx { get => _obj.Extra.LocationNameIdx; set => _obj.Extra.LocationNameIdx = value; }
 
         [System.ComponentModel.Category("2. Transform")]
@@ -323,20 +414,42 @@ namespace MVARStudio
         public float Z { get => _obj.Position.Z; set => _obj.Position.Z = value; }
 
         [System.ComponentModel.Category("2. Transform")]
+        public bool InBounds { get => _obj.Position.InBounds; set => _obj.Position.InBounds = value; }
+        [System.ComponentModel.Category("2. Transform")]
+        public bool HasBsp { get => _obj.Position.HasBsp; set => _obj.Position.HasBsp = value; }
+        [System.ComponentModel.Category("2. Transform")]
+        public byte BspIndex { get => _obj.Position.BspIndex; set => _obj.Position.BspIndex = value; }
+
+        [System.ComponentModel.Category("2. Transform")]
         [System.ComponentModel.Description("Yaw angle (0-16383).")]
         public ushort Yaw { get => _obj.Angle; set => _obj.Angle = value; }
 
         [System.ComponentModel.Category("2. Transform")]
-        public bool InBounds { get => _obj.Position.InBounds; set => _obj.Position.InBounds = value; }
+        public bool UpIsGlobal { get => _obj.UpIsGlobal; set => _obj.UpIsGlobal = value; }
 
         [System.ComponentModel.Category("2. Transform")]
-        public bool UpIsGlobal { get => _obj.UpIsGlobal; set => _obj.UpIsGlobal = value; }
+        public uint UpQuant { get => _obj.UpQuant; set => _obj.UpQuant = value; }
+
+        [System.ComponentModel.Category("2. Transform")]
+        [System.ComponentModel.DisplayName("Rot X (Euler)")]
+        [System.ComponentModel.ReadOnly(true)]
+        public float RotationX => _obj.GetRotationEulerDegrees().x;
+
+        [System.ComponentModel.Category("2. Transform")]
+        [System.ComponentModel.DisplayName("Rot Y (Euler)")]
+        [System.ComponentModel.ReadOnly(true)]
+        public float RotationY => _obj.GetRotationEulerDegrees().y;
+
+        [System.ComponentModel.Category("2. Transform")]
+        [System.ComponentModel.DisplayName("Rot Z (Euler)")]
+        [System.ComponentModel.ReadOnly(true)]
+        public float RotationZ => _obj.GetRotationEulerDegrees().z;
 
         [System.ComponentModel.Category("3. Properties")]
         public sbyte SpawnSeq { get => _obj.Extra.SpawnSeq; set => _obj.Extra.SpawnSeq = value; }
-        
-        [System.ComponentModel.Category("3. Properties")]
         public byte RespawnTime { get => _obj.Extra.RespawnTime; set => _obj.Extra.RespawnTime = value; }
+        public byte RawFlags { get => _obj.Flags; set => _obj.Flags = value; }
+        public int Relative { get => _obj.Relative; set => _obj.Relative = value; }
 
         [System.ComponentModel.Category("3. Properties")]
         public PhysicsType Physics { 
@@ -362,6 +475,9 @@ namespace MVARStudio
             set => _obj.Extra.PlacementFlags = (byte)(value ? (_obj.Extra.PlacementFlags | 0x20) : (_obj.Extra.PlacementFlags & ~0x20));
         }
 
+        [System.ComponentModel.Category("3. Properties")]
+        public byte RawPlacementFlags { get => _obj.Extra.PlacementFlags; set => _obj.Extra.PlacementFlags = value; }
+
         [System.ComponentModel.Category("6. Shape")]
         public ShapeType Shape { get => (ShapeType)_obj.Extra.ShapeType; set => _obj.Extra.ShapeType = (byte)value; }
         [System.ComponentModel.Category("6. Shape")]
@@ -374,7 +490,6 @@ namespace MVARStudio
         public float Bottom { get => _obj.Extra.ShapeBottom; set => _obj.Extra.ShapeBottom = value; }
 
         [System.ComponentModel.Category("3. Properties")]
-        [System.ComponentModel.Description("Select the owner team.")]
         [System.ComponentModel.TypeConverter(typeof(TeamConverter))]
         public string Team { 
             get => TEAMS.ContainsKey(_obj.Extra.TeamRaw - 1) ? TEAMS[_obj.Extra.TeamRaw - 1] : "Neutral";
@@ -385,7 +500,6 @@ namespace MVARStudio
         }
 
         [System.ComponentModel.Category("3. Properties")]
-        [System.ComponentModel.Description("Object color index. 'Team' uses the owner team color.")]
         [System.ComponentModel.TypeConverter(typeof(ColorConverter))]
         public string Color { 
             get => COLORS.ContainsKey(_obj.Extra.Color) ? COLORS[_obj.Extra.Color] : "Team";
@@ -451,7 +565,7 @@ namespace MVARStudio
         public bool IsCinematic { get => _mv.IsCinematic; set => _mv.IsCinematic = value; }
 
         [System.ComponentModel.Category("4. Flags")]
-        public uint MCC_MapId { get => _mv.MapMccId; set => _mv.MapMccId = value; }
+        public int MCC_MapId { get => _mv.MapMccId; set => _mv.MapMccId = value; }
 
         private const string BBOX_DESC = "WARNING: Changing bounding box values can produce highly unexpected results, including map corruption or objects becoming unselectable.";
 
@@ -475,6 +589,22 @@ namespace MVARStudio
         public float BBox_ZMax { get => _mv.BBox.ZMax; set => _mv.BBox.ZMax = value; }
     }
 
+    public class MpTypeConverter : System.ComponentModel.StringConverter
+    {
+        public override bool GetStandardValuesSupported(System.ComponentModel.ITypeDescriptorContext context) => true;
+        public override bool GetStandardValuesExclusive(System.ComponentModel.ITypeDescriptorContext context) => true;
+        public override StandardValuesCollection GetStandardValues(System.ComponentModel.ITypeDescriptorContext context)
+        {
+            return new StandardValuesCollection(new[] { 
+                "Ordinary", "Weapon", "Grenade", "Projectile", "Powerup", "Equipment", "Ammo Pack",
+                "Light Land Vehicle", "Heavy Land Vehicle", "Flying Vehicle", "Turret", "Device",
+                "Teleporter (Two-Way)", "Teleporter (Sender)", "Teleporter (Receiver)", "Player Spawn",
+                "Player Respawn Zone", "Secondary Objective", "Primary Objective", "Named Location Area",
+                "Danger Zone", "Safe Volume", "Kill Volume", "Cinematic Camera"
+            });
+        }
+    }
+
     public class ColorConverter : System.ComponentModel.StringConverter
     {
         public override bool GetStandardValuesSupported(System.ComponentModel.ITypeDescriptorContext context) => true;
@@ -492,6 +622,20 @@ namespace MVARStudio
         public override StandardValuesCollection GetStandardValues(System.ComponentModel.ITypeDescriptorContext context)
         {
             return new StandardValuesCollection(new[] { "Neutral", "Red", "Blue", "Green", "Orange", "Purple", "Gold", "Brown", "Pink" });
+        }
+    }
+
+    public class ForgeItemConverter : System.ComponentModel.StringConverter
+    {
+        public override bool GetStandardValuesSupported(System.ComponentModel.ITypeDescriptorContext context) => true;
+        public override bool GetStandardValuesExclusive(System.ComponentModel.ITypeDescriptorContext context) => true;
+        public override StandardValuesCollection GetStandardValues(System.ComponentModel.ITypeDescriptorContext context)
+        {
+            if (MainForm.CurrentPalette != null)
+            {
+                return new StandardValuesCollection(MainForm.CurrentPalette.GetAllItemNames());
+            }
+            return new StandardValuesCollection(new[] { "None" });
         }
     }
 

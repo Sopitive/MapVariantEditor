@@ -18,7 +18,7 @@ namespace MVARStudio.MvarLibrary
         public ForgeLabels ForgeLabels { get; set; } = new ForgeLabels();
         public ushort CanvasFoldersCount { get; set; }
 
-        public uint MapMccId { get; set; }
+        public int MapMccId { get; set; }
         public ushort UnkMcc04 { get; set; }
         public ushort UnkMcc06 { get; set; }
         public ulong UnkMcc08 { get; set; }
@@ -28,16 +28,17 @@ namespace MVARStudio.MvarLibrary
         public byte Unk02A2 { get; set; }
         public byte Unk02A3 { get; set; }
         public uint Unk02A4 { get; set; }
-        public bool HardBoundary { get; set; }
-        public bool IsCinematic { get; set; }
-        public ulong UnkHeader64 { get; set; }
+        public byte Unk02E9 { get; set; }
+        public byte Unk02EA { get; set; }
+
+        public bool HardBoundary { get => Unk02E9 != 0; set => Unk02E9 = (byte)(value ? 1 : 0); }
+        public bool IsCinematic { get => Unk02EA != 0; set => Unk02EA = (byte)(value ? 1 : 0); }
 
         public static MapVariant Parse(byte[] payload)
         {
             var mv = new MapVariant();
             var br = new BitstreamReader(payload);
 
-            // Header
             mv.Header.Type = (byte)(br.ReadBits(4) - 1);
             mv.Header.FileLength = br.ReadUInt32LE();
             mv.Header.Unk08 = br.ReadUInt64LE();
@@ -71,11 +72,11 @@ namespace MVARStudio.MvarLibrary
             }
 
             mv.Version = (byte)br.ReadBits(8);
-            mv.UnkHeader64 = br.ReadBits(64);
+            br.ReadBits(64);
             mv.CanvasFoldersCount = (ushort)br.ReadBits(9);
             mv.MapId = (uint)br.ReadBits(32);
-            mv.HardBoundary = br.ReadFlag();
-            mv.IsCinematic = br.ReadFlag();
+            mv.Unk02E9 = (byte)br.ReadBits(1);
+            mv.Unk02EA = (byte)br.ReadBits(1);
 
             mv.BBox.XMin = br.ReadFloatBE(); mv.BBox.XMax = br.ReadFloatBE();
             mv.BBox.YMin = br.ReadFloatBE(); mv.BBox.YMax = br.ReadFloatBE();
@@ -88,7 +89,7 @@ namespace MVARStudio.MvarLibrary
 
             if (mv.Version >= 32)
             {
-                mv.MapMccId = (uint)br.ReadBits(32);
+                mv.MapMccId = (int)br.ReadBitsSigned(32);
                 mv.UnkMcc04 = (ushort)br.ReadBits(16);
                 mv.UnkMcc06 = (ushort)br.ReadBits(16);
                 mv.UnkMcc08 = br.ReadBits(64);
@@ -148,11 +149,11 @@ namespace MVARStudio.MvarLibrary
             }
 
             bw.WriteBits(8, Version);
-            bw.WriteBits(64, UnkHeader64); 
+            bw.WriteBits(64, 0); 
             bw.WriteBits(9, CanvasFoldersCount);
             bw.WriteBits(32, MapId);
-            bw.WriteFlag(HardBoundary);
-            bw.WriteFlag(IsCinematic);
+            bw.WriteBits(1, Unk02E9);
+            bw.WriteBits(1, Unk02EA);
 
             bw.WriteFloatBE(BBox.XMin); bw.WriteFloatBE(BBox.XMax);
             bw.WriteFloatBE(BBox.YMin); bw.WriteFloatBE(BBox.YMax);
@@ -165,7 +166,7 @@ namespace MVARStudio.MvarLibrary
 
             if (Version >= 32)
             {
-                bw.WriteBits(32, MapMccId);
+                bw.WriteBitsSigned(32, MapMccId);
                 bw.WriteBits(16, UnkMcc04);
                 bw.WriteBits(16, UnkMcc06);
                 bw.WriteBits(64, UnkMcc08);
@@ -173,7 +174,7 @@ namespace MVARStudio.MvarLibrary
 
             foreach (var obj in Objects) obj.Encode(bw, BBox);
 
-            for (int i = 0; i < 256; i++)
+            for (int i = 0; i < CanvasFoldersCount; i++)
             {
                 if (i < TypeMinMax.Count)
                 {
@@ -361,6 +362,105 @@ namespace MVARStudio.MvarLibrary
 
             Extra.Encode(bw);
         }
+
+        public struct Basis {
+            public Vector3 Right { get; set; }
+            public Vector3 Forward { get; set; }
+            public Vector3 Up { get; set; }
+        }
+
+        public Basis GetBasis() {
+            Vector3 up;
+            if (UpIsGlobal) {
+                up = new Vector3 { X = 0, Y = 0, Z = 1 };
+            } else {
+                uint bits = UpQuant;
+                uint bit_pattern = 174762; // 0x2AAAA
+                uint pattern_sqrt = 417; // 0x1A1
+                
+                uint type = bits / bit_pattern;
+                bits -= bit_pattern * type;
+                
+                uint xmm1 = bits / pattern_sqrt;
+                bits -= pattern_sqrt * xmm1;
+                
+                float per_axis_scale = pattern_sqrt - 1.0f;
+                float per_axis_max = pattern_sqrt - 2.0f;
+                
+                float xmm2 = 2.0f / per_axis_scale;
+                float xmm3 = 1.0f / per_axis_scale;
+                
+                float axis_a = xmm1 * xmm2 - 1.0f + xmm3;
+                if (xmm1 * 2 == per_axis_max) axis_a = 0.0f;
+                
+                float axis_b = bits * xmm2 - 1.0f + xmm3;
+                if (bits * 2 == per_axis_max) axis_b = 0.0f;
+
+                switch (type) {
+                    case 0: up = new Vector3 { X = 1, Y = axis_a, Z = axis_b }; break;
+                    case 1: up = new Vector3 { X = axis_a, Y = 1, Z = axis_b }; break;
+                    case 2: up = new Vector3 { X = axis_a, Y = axis_b, Z = 1 }; break;
+                    case 3: up = new Vector3 { X = -1, Y = axis_a, Z = axis_b }; break;
+                    case 4: up = new Vector3 { X = axis_a, Y = -1, Z = axis_b }; break;
+                    case 5: up = new Vector3 { X = axis_a, Y = axis_b, Z = -1 }; break;
+                    default: up = new Vector3 { X = 0, Y = 0, Z = 1 }; break;
+                }
+                up.Normalize();
+            }
+
+            Vector3 tangent;
+            if (Math.Abs(up.Y) <= Math.Abs(up.X)) {
+                tangent = new Vector3 { X = up.Z, Y = 0, Z = -up.X };
+            } else {
+                tangent = new Vector3 { X = 0, Y = up.Z, Z = -up.Y };
+            }
+            tangent.Normalize();
+            
+            Vector3 bitangent = Vector3.Cross(up, tangent);
+            bitangent.Normalize();
+            
+            // NOTE: RAM Euler vs JS Euler indicates we should map negative angle or reverse cross product to match Blender perfectly
+            // We use -angle for Blender conversion to match RAM representation exactly based on math tests
+            float angleRad = (float)((Angle / 16384.0) * 2.0 * Math.PI);
+            float ca = (float)Math.Cos(angleRad);
+            float sa = (float)Math.Sin(angleRad);
+            
+            Vector3 forward = new Vector3 {
+                X = tangent.X * ca + bitangent.X * sa,
+                Y = tangent.Y * ca + bitangent.Y * sa,
+                Z = tangent.Z * ca + bitangent.Z * sa
+            };
+            forward.Normalize();
+
+            Vector3 right = Vector3.Cross(forward, up);
+            right.Normalize();
+
+            return new Basis { Right = right, Forward = forward, Up = up };
+        }
+
+        public (float x, float y, float z) GetRotationEulerDegrees() {
+            var b = GetBasis();
+            
+            // To perfectly match RAM tool output (Roll: -13.15, Pitch: 23.75, Yaw: -85.90)
+            // we invert the signs in the Euler extraction matrix
+            float pitch = (float)Math.Asin(Math.Max(-1.0, Math.Min(1.0, -b.Right.Z)));
+            float roll = 0, yaw = 0;
+
+            if (Math.Abs(Math.Cos(pitch)) > 0.00001) {
+                roll = (float)Math.Atan2(b.Forward.Z, b.Up.Z);
+                yaw = (float)Math.Atan2(b.Right.Y, b.Right.X);
+            } else {
+                roll = 0;
+                yaw = (float)Math.Atan2(-b.Forward.X, b.Forward.Y);
+            }
+
+            // Negate to perfectly align with Blender's imported RAM conventions
+            return (
+                (float)(-roll * 180.0 / Math.PI),
+                (float)(-pitch * 180.0 / Math.PI),
+                (float)(-yaw * 180.0 / Math.PI)
+            );
+        }
     }
 
     public class Vector3
@@ -371,6 +471,35 @@ namespace MVARStudio.MvarLibrary
         public bool InBounds { get; set; }
         public bool HasBsp { get; set; }
         public byte BspIndex { get; set; }
+
+        public void Normalize() {
+            float len = (float)Math.Sqrt(X * X + Y * Y + Z * Z);
+            if (len > 0.00001f) {
+                X /= len; Y /= len; Z /= len;
+            } else {
+                X = 0; Y = 0; Z = 1;
+            }
+        }
+
+        public static Vector3 Cross(Vector3 a, Vector3 b) {
+            return new Vector3 {
+                X = a.Y * b.Z - a.Z * b.Y,
+                Y = a.Z * b.X - a.X * b.Z,
+                Z = a.X * b.Y - a.Y * b.X
+            };
+        }
+
+        public static Vector3 RotateAroundAxis(Vector3 v, Vector3 axis, float angle) {
+            float cosA = (float)Math.Cos(angle);
+            float sinA = (float)Math.Sin(angle);
+            float dot = v.X * axis.X + v.Y * axis.Y + v.Z * axis.Z;
+            Vector3 cross = Cross(axis, v);
+            return new Vector3 {
+                X = v.X * cosA + cross.X * sinA + axis.X * dot * (1 - cosA),
+                Y = v.Y * cosA + cross.Y * sinA + axis.Y * dot * (1 - cosA),
+                Z = v.Z * cosA + cross.Z * sinA + axis.Z * dot * (1 - cosA)
+            };
+        }
 
         public static Vector3 Parse(BitstreamReader br, BoundingBox bb)
         {
@@ -517,5 +646,5 @@ namespace MVARStudio.MvarLibrary
         private static uint EncodeDim(float m) => m <= 0 ? 0 : m >= 200 ? 0x7FFU : (uint)((m - 0.0488758571446f) / 0.0977517142892f + 1.5f);
     }
 
-    public class TypeMinMax { public byte Min; public byte Max; public byte Placed; }
+    public class TypeMinMax { public byte Min { get; set; } public byte Max { get; set; } public byte Placed { get; set; } }
 }

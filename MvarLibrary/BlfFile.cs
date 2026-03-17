@@ -80,7 +80,17 @@ namespace MVARStudio.MvarLibrary
             {
                 string magic = Encoding.ASCII.GetString(data, pos, 4);
                 uint size = ReadUInt32BE(data, pos + 4);
-                if (size == 0 || pos + size > data.Length) break;
+
+                // BLF chunks must have at least 8 bytes (magic + size)
+                // If we encounter a tiny or zero size, something is wrong with the file structure.
+                if (size < 8 || pos + size > data.Length) 
+                {
+                    // If this is the very first chunk and it's not _blf, it's not a valid BLF file.
+                    if (pos == 0 && magic != "_blf") break;
+                    
+                    // Otherwise, we might have hit trailing data or corruption.
+                    break; 
+                }
 
                 var chunk = new BlfChunk
                 {
