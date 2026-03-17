@@ -7,6 +7,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace MVARStudio
 {
@@ -23,6 +24,8 @@ namespace MVARStudio
         private PropertyGrid _propGrid;
         private TextBox _txtTitle;
         private TextBox _txtDescription;
+        private ComboBox _cmbFilter;
+        private ListBox _lstFiles;
         private ToolStrip _toolStrip;
         private ToolStripStatusLabel _lblMapStatus;
         private string _mccPath;
@@ -47,11 +50,12 @@ namespace MVARStudio
         private void SetupUI()
         {
             this.Text = "MVAR Studio - Halo Reach Forge Editor";
-            this.Size = new Size(1100, 750);
+            this.Size = new Size(1400, 850);
             this.BackColor = ColorBg;
 
             _toolStrip = new ToolStrip { BackColor = ColorSurface, ForeColor = ColorText, GripStyle = ToolStripGripStyle.Hidden, Padding = new Padding(5) };
             var btnOpen = new ToolStripButton("  Open MVAR  ", null, (s, e) => OpenMvar()) { DisplayStyle = ToolStripItemDisplayStyle.Text, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
+            var btnBrowseFolder = new ToolStripButton("  Browse Folder  ", null, (s, e) => BrowseFolder()) { DisplayStyle = ToolStripItemDisplayStyle.Text, Font = new Font("Segoe UI", 9) };
             var btnSave = new ToolStripButton("  Save MVAR  ", null, (s, e) => SaveMvar()) { DisplayStyle = ToolStripItemDisplayStyle.Text, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
             var btnExport = new ToolStripButton("  Export JSON  ", null, (s, e) => ExportToJson()) { DisplayStyle = ToolStripItemDisplayStyle.Text, Font = new Font("Segoe UI", 9) };
             var btnMapSettings = new ToolStripButton("  Map Settings  ", null, (s, e) => {
@@ -60,6 +64,7 @@ namespace MVARStudio
             }) { DisplayStyle = ToolStripItemDisplayStyle.Text, Font = new Font("Segoe UI", 9) };
             
             _toolStrip.Items.Add(btnOpen);
+            _toolStrip.Items.Add(btnBrowseFolder);
             _toolStrip.Items.Add(new ToolStripSeparator());
             _toolStrip.Items.Add(btnSave);
             _toolStrip.Items.Add(btnExport);
@@ -78,31 +83,76 @@ namespace MVARStudio
 
             var pnlHeader = new Panel { Dock = DockStyle.Top, Height = 100, Padding = new Padding(15), BackColor = ColorSurface };
             pnlHeader.Controls.Add(new Label { Text = "MAP TITLE", Location = new Point(15, 12), ForeColor = ColorAccent, Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true });
-            _txtTitle = new TextBox { Location = new Point(15, 30), Width = 400, BackColor = ColorBg, ForeColor = ColorText, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10) };
+            _txtTitle = new TextBox { Location = new Point(15, 30), Width = 300, BackColor = ColorBg, ForeColor = ColorText, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10) };
             pnlHeader.Controls.Add(_txtTitle);
 
-            pnlHeader.Controls.Add(new Label { Text = "DESCRIPTION", Location = new Point(440, 12), ForeColor = ColorAccent, Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true });
-            _txtDescription = new TextBox { Location = new Point(440, 30), Width = 600, BackColor = ColorBg, ForeColor = ColorText, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10) };
+            pnlHeader.Controls.Add(new Label { Text = "DESCRIPTION", Location = new Point(330, 12), ForeColor = ColorAccent, Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true });
+            _txtDescription = new TextBox { Location = new Point(330, 30), Width = 400, BackColor = ColorBg, ForeColor = ColorText, BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10) };
             pnlHeader.Controls.Add(_txtDescription);
+
+            pnlHeader.Controls.Add(new Label { Text = "FILTER BY CATEGORY (MpType)", Location = new Point(750, 12), ForeColor = ColorAccent, Font = new Font("Segoe UI", 8, FontStyle.Bold), AutoSize = true });
+            _cmbFilter = new ComboBox { 
+                Location = new Point(750, 30), 
+                Width = 250, 
+                BackColor = ColorBg, 
+                ForeColor = ColorText, 
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat
+            };
+            _cmbFilter.SelectedIndexChanged += (s, e) => RefreshGrid();
+            pnlHeader.Controls.Add(_cmbFilter);
+
             this.Controls.Add(pnlHeader);
             pnlHeader.BringToFront();
 
-            var split = new SplitContainer { 
+            // Setup SplitContainers first
+            var splitContent = new SplitContainer { 
                 Dock = DockStyle.Fill, 
                 Orientation = Orientation.Vertical, 
-                BackColor = ColorBorder
+                BackColor = ColorBorder,
+                FixedPanel = FixedPanel.Panel2,
+                SplitterWidth = 4
             };
-            this.Controls.Add(split);
-            split.BringToFront();
-            
-            try { split.SplitterDistance = Math.Max(100, split.Width - 350); } catch {}
 
+            var splitMain = new SplitContainer { 
+                Dock = DockStyle.Fill, 
+                Orientation = Orientation.Vertical, 
+                BackColor = ColorBorder,
+                FixedPanel = FixedPanel.Panel1,
+                SplitterWidth = 4
+            };
+
+            this.Controls.Add(splitMain);
+            splitMain.BringToFront();
+
+            // Sidebar
+            var pnlSidebar = new Panel { Dock = DockStyle.Fill, BackColor = ColorSurface, Padding = new Padding(0) };
+            pnlSidebar.Controls.Add(new Label { Text = "  EXPLORER", Dock = DockStyle.Top, Height = 25, ForeColor = ColorAccent, Font = new Font("Segoe UI", 8, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft });
+            _lstFiles = new ListBox { 
+                Dock = DockStyle.Fill, 
+                BackColor = ColorBg, 
+                ForeColor = ColorText, 
+                BorderStyle = BorderStyle.None,
+                Font = new Font("Segoe UI", 9),
+                IntegralHeight = false 
+            };
+            _lstFiles.SelectedIndexChanged += (s, e) => {
+                if (_lstFiles.SelectedItem is MvarFileItem fileItem)
+                {
+                    LoadMvar(fileItem.Path);
+                }
+            };
+            pnlSidebar.Controls.Add(_lstFiles);
+            splitMain.Panel1.Controls.Add(pnlSidebar);
+            splitMain.Panel2.Controls.Add(splitContent);
+
+            // Grid
             _dgvObjects = new DataGridView { 
                 Dock = DockStyle.Fill, 
                 AutoGenerateColumns = false, 
                 AllowUserToAddRows = false, 
                 SelectionMode = DataGridViewSelectionMode.FullRowSelect, 
-                MultiSelect = false,
+                MultiSelect = true,
                 BackgroundColor = ColorBg,
                 ForeColor = ColorText,
                 BorderStyle = BorderStyle.None,
@@ -120,8 +170,8 @@ namespace MVARStudio
             _dgvObjects.DefaultCellStyle.SelectionForeColor = ColorBg;
 
             _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Slot", HeaderText = "Slot", Width = 40 });
-            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ItemName", HeaderText = "Item Name", Width = 140, ReadOnly = true });
-            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TypeDisplayName", HeaderText = "Type", Width = 140 });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ItemName", HeaderText = "Item Name", Width = 180, ReadOnly = true });
+            _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TypeDisplayName", HeaderText = "Category", Width = 140 });
             _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TeamDisplayName", HeaderText = "Team", Width = 80 });
             _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Folder", HeaderText = "Fld", Width = 35 });
             _dgvObjects.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "FolderItem", HeaderText = "Itm", Width = 35 });
@@ -129,12 +179,17 @@ namespace MVARStudio
             
             _dgvObjects.SelectionChanged += (s, e) => {
                 if (!_isRefreshing && _dgvObjects.SelectedRows.Count > 0) {
-                    var proxy = (ObjectProxy)_dgvObjects.SelectedRows[0].DataBoundItem;
-                    _propGrid.SelectedObject = proxy;
+                    var proxies = new List<ObjectProxy>();
+                    foreach (DataGridViewRow row in _dgvObjects.SelectedRows)
+                    {
+                        if (row.DataBoundItem is ObjectProxy p) proxies.Add(p);
+                    }
+                    _propGrid.SelectedObjects = proxies.ToArray();
                 }
             };
-            split.Panel1.Controls.Add(_dgvObjects);
+            splitContent.Panel1.Controls.Add(_dgvObjects);
 
+            // Property Grid
             _propGrid = new PropertyGrid { 
                 Dock = DockStyle.Fill, 
                 ViewBackColor = ColorSurface, 
@@ -149,7 +204,11 @@ namespace MVARStudio
             
             var pnlPropWrapper = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10, 0, 10, 10), BackColor = ColorSurface };
             pnlPropWrapper.Controls.Add(_propGrid);
-            split.Panel2.Controls.Add(pnlPropWrapper);
+            splitContent.Panel2.Controls.Add(pnlPropWrapper);
+
+            // Explicitly set distances at the end
+            splitMain.SplitterDistance = 180;
+            splitContent.SplitterDistance = 950;
         }
 
         private void ApplyDarkTheme(Control container)
@@ -157,11 +216,51 @@ namespace MVARStudio
             foreach (Control c in container.Controls)
             {
                 if (c is Label) c.ForeColor = ColorText;
-                else if (c is Button) { c.BackColor = ColorBorder; c.ForeColor = ColorText; }
-                else if (c is TextBox) { c.BackColor = ColorBg; c.ForeColor = ColorText; }
+                else if (c is Button b) { b.BackColor = ColorBorder; b.ForeColor = ColorText; b.FlatStyle = FlatStyle.Flat; }
+                else if (c is TextBox t) { t.BackColor = ColorBg; t.ForeColor = ColorText; t.BorderStyle = BorderStyle.FixedSingle; }
+                else if (c is ListBox l) { l.BackColor = ColorBg; l.ForeColor = ColorText; }
                 
                 if (c.HasChildren) ApplyDarkTheme(c);
             }
+        }
+
+        private void BrowseFolder()
+        {
+            using (var fbd = new FolderBrowserDialog())
+            {
+                if (fbd.ShowDialog() == DialogResult.OK)
+                {
+                    ScanFolder(fbd.SelectedPath);
+                }
+            }
+        }
+
+        private async void ScanFolder(string path)
+        {
+            _lstFiles.Items.Clear();
+            var files = Directory.GetFiles(path, "*.mvar");
+            
+            _lblMapStatus.Text = $"Scanning {files.Length} files...";
+            
+            foreach (var f in files)
+            {
+                try {
+                    var item = await Task.Run(() => {
+                        try {
+                            var blf = BlfFile.Read(f);
+                            var mvar = blf.Chunks.FirstOrDefault(c => c.Magic == "mvar");
+                            if (mvar != null) {
+                                var mv = MapVariant.Parse(mvar.Payload);
+                                return new MvarFileItem { Path = f, Title = mv.Header.Title };
+                            }
+                        } catch {}
+                        return new MvarFileItem { Path = f, Title = Path.GetFileName(f) };
+                    });
+                    _lstFiles.Items.Add(item);
+                } catch {}
+            }
+            
+            _lblMapStatus.Text = $"Found {_lstFiles.Items.Count} map variants in {path}";
         }
 
         private void OpenMvar()
@@ -169,55 +268,78 @@ namespace MVARStudio
             var ofd = new OpenFileDialog { Filter = "MVAR files (*.mvar)|*.mvar|All files (*.*)|*.*" };
             if (ofd.ShowDialog() == DialogResult.OK)
             {
-                try
-                {
-                    _blf = BlfFile.Read(ofd.FileName);
-                    var mvarChunk = _blf.Chunks.FirstOrDefault(c => c.Magic == "mvar");
-                    if (mvarChunk == null) { MessageBox.Show("No mvar chunk found."); return; }
-
-                    _mv = MapVariant.Parse(mvarChunk.Payload);
-                    _txtTitle.Text = _mv.Header.Title;
-                    _txtDescription.Text = _mv.Header.Description;
-
-                    CurrentPalette = null;
-                    var mapInfo = ReachMaps.GetMap(_mv.MapId);
-                    
-                    string workspaceDir = @"c:\Users\Wyatt\source\repos\ReverseMe\MVARViewer\reach-mvar-viewer-js\map-data";
-                    if (!Directory.Exists(workspaceDir))
-                        workspaceDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "map-data");
-
-                    string palettePath = Path.Combine(workspaceDir, _mv.MapId.ToString(), "forge-palette.xml");
-                    
-                    if (!File.Exists(palettePath))
-                        palettePath = Path.Combine(workspaceDir, "3006", "forge-palette.xml");
-
-                    if (File.Exists(palettePath))
-                    {
-                        try { 
-                            CurrentPalette = MapPalette.LoadFromXml(_mv.MapId, palettePath); 
-                        } catch (Exception ex) {
-                            Console.WriteLine($"Error loading XML: {ex.Message}");
-                        }
-                    }
-
-                    if (mapInfo != null)
-                    {
-                        var mccPath = MccLocator.FindMccPath();
-                        string mapFile = MccLocator.GetMapFilePath(mccPath, mapInfo.InternalName);
-                        string paletteStatus = CurrentPalette != null ? $" ({CurrentPalette.Folders.Count} folders)" : " [Palette Missing]";
-                        
-                        if (mapFile != null) _lblMapStatus.Text = $"Map: {mapInfo.Name}{paletteStatus} (using {mapInfo.InternalName}.map)";
-                        else _lblMapStatus.Text = $"Map: {mapInfo.Name}{paletteStatus} (.map not found)";
-                    }
-                    else
-                    {
-                        _lblMapStatus.Text = $"Unknown Map ID: {_mv.MapId}";
-                    }
-
-                    RefreshGrid();
-                }
-                catch (Exception ex) { MessageBox.Show("Error: " + ex.Message); }
+                LoadMvar(ofd.FileName);
             }
+        }
+
+        private void LoadMvar(string path)
+        {
+            try
+            {
+                _blf = BlfFile.Read(path);
+                var mvarChunk = _blf.Chunks.FirstOrDefault(c => c.Magic == "mvar");
+                if (mvarChunk == null) { MessageBox.Show("No mvar chunk found."); return; }
+
+                _mv = MapVariant.Parse(mvarChunk.Payload);
+                _txtTitle.Text = _mv.Header.Title;
+                _txtDescription.Text = _mv.Header.Description;
+
+                CurrentPalette = null;
+                var mapInfo = ReachMaps.GetMap(_mv.MapId);
+                
+                string workspaceDir = @"c:\Users\Wyatt\source\repos\ReverseMe\MVARViewer\reach-mvar-viewer-js\map-data";
+                if (!Directory.Exists(workspaceDir))
+                    workspaceDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "map-data");
+
+                string palettePath = Path.Combine(workspaceDir, _mv.MapId.ToString(), "forge-palette.xml");
+                
+                if (!File.Exists(palettePath))
+                    palettePath = Path.Combine(workspaceDir, "3006", "forge-palette.xml");
+
+                if (File.Exists(palettePath))
+                {
+                    try { 
+                        CurrentPalette = MapPalette.LoadFromXml(_mv.MapId, palettePath); 
+                    } catch (Exception ex) {
+                        Console.WriteLine($"Error loading XML: {ex.Message}");
+                    }
+                }
+
+                UpdateFilterList();
+
+                if (mapInfo != null)
+                {
+                    var mccPath = MccLocator.FindMccPath();
+                    string mapFile = MccLocator.GetMapFilePath(mccPath, mapInfo.InternalName);
+                    string paletteStatus = CurrentPalette != null ? $" ({CurrentPalette.Folders.Count} folders)" : " [Palette Missing]";
+                    
+                    if (mapFile != null) _lblMapStatus.Text = $"Map: {mapInfo.Name}{paletteStatus} (using {mapInfo.InternalName}.map)";
+                    else _lblMapStatus.Text = $"Map: {mapInfo.Name}{paletteStatus} (.map not found)";
+                }
+                else
+                {
+                    _lblMapStatus.Text = $"Unknown Map ID: {_mv.MapId}";
+                }
+
+                RefreshGrid();
+            }
+            catch (Exception ex) { MessageBox.Show("Error: " + ex.Message); }
+        }
+
+        private void UpdateFilterList()
+        {
+            if (_cmbFilter == null) return;
+            _cmbFilter.Items.Clear();
+            _cmbFilter.Items.Add("All Categories");
+            
+            var categories = _mv.Objects.Where(o => o.Present)
+                .Select(o => ObjectProxy.MP_TYPES.ContainsKey(o.Extra.MpType) ? ObjectProxy.MP_TYPES[o.Extra.MpType] : $"Type {o.Extra.MpType}")
+                .Distinct()
+                .OrderBy(s => s)
+                .ToArray();
+            
+            _cmbFilter.Items.AddRange(categories);
+            _cmbFilter.SelectedIndex = 0;
         }
 
         private bool _isRefreshing = false;
@@ -229,7 +351,12 @@ namespace MVARStudio
             _dgvObjects.SuspendLayout();
             try
             {
-                var proxies = _mv.Objects.Where(o => o.Present).Select(o => new ObjectProxy(o, _mv)).ToList();
+                string filter = _cmbFilter.SelectedItem?.ToString() ?? "All Categories";
+                var proxies = _mv.Objects.Where(o => o.Present)
+                    .Select(o => new ObjectProxy(o, _mv))
+                    .Where(p => filter == "All Categories" || p.TypeDisplayName == filter)
+                    .ToList();
+                
                 _dgvObjects.DataSource = null;
                 _dgvObjects.DataSource = proxies;
             }
@@ -330,6 +457,13 @@ namespace MVARStudio
         protected override void Dispose(bool disposing) { if (disposing && (components != null)) components.Dispose(); base.Dispose(disposing); }
     }
 
+    public class MvarFileItem
+    {
+        public string Path { get; set; }
+        public string Title { get; set; }
+        public override string ToString() => Title;
+    }
+
     public class ObjectProxy
     {
         private ForgeObject _obj;
@@ -368,7 +502,7 @@ namespace MVARStudio
             get => MP_TYPES.ContainsKey(_obj.Extra.MpType) ? MP_TYPES[_obj.Extra.MpType] : $"Type {_obj.Extra.MpType}";
             set {
                 var kv = MP_TYPES.FirstOrDefault(x => x.Value == value);
-                _obj.Extra.MpType = (byte)kv.Key;
+                if (kv.Value != null) _obj.Extra.MpType = (byte)kv.Key;
             }
         }
 
@@ -495,7 +629,7 @@ namespace MVARStudio
             get => TEAMS.ContainsKey(_obj.Extra.TeamRaw - 1) ? TEAMS[_obj.Extra.TeamRaw - 1] : "Neutral";
             set {
                 var kv = TEAMS.FirstOrDefault(x => x.Value == value);
-                _obj.Extra.TeamRaw = (byte)(kv.Key + 1);
+                if (kv.Value != null) _obj.Extra.TeamRaw = (byte)(kv.Key + 1);
             }
         }
 
@@ -505,7 +639,7 @@ namespace MVARStudio
             get => COLORS.ContainsKey(_obj.Extra.Color) ? COLORS[_obj.Extra.Color] : "Team";
             set {
                 var kv = COLORS.FirstOrDefault(x => x.Value == value);
-                _obj.Extra.Color = kv.Key;
+                if (kv.Value != null) _obj.Extra.Color = kv.Key;
             }
         }
 
@@ -513,18 +647,18 @@ namespace MVARStudio
         public string TeamDisplayName => TEAMS.ContainsKey(_obj.Extra.TeamRaw - 1) ? TEAMS[_obj.Extra.TeamRaw - 1] : $"Team {_obj.Extra.TeamRaw - 1}";
         public string PositionString => $"({_obj.Position.X:F2}, {_obj.Position.Y:F2}, {_obj.Position.Z:F2})";
 
-        private static readonly Dictionary<int, string> COLORS = new Dictionary<int, string> {
+        public static readonly Dictionary<int, string> COLORS = new Dictionary<int, string> {
             {-1, "Team"}, {0, "White"}, {1, "Black"}, {2, "Red"}, {3, "Blue"}, {4, "Green"}, {5, "Orange"}, {6, "Purple"}, {7, "Gold"}
         };
 
-        private static readonly Dictionary<int, string> MP_TYPES = new Dictionary<int, string> { 
+        public static readonly Dictionary<int, string> MP_TYPES = new Dictionary<int, string> { 
             {0,"Ordinary"}, {1,"Weapon"}, {2,"Grenade"}, {3,"Projectile"}, {4,"Powerup"}, {5,"Equipment"}, {6,"Ammo Pack"},
             {7,"Light Land Vehicle"}, {8,"Heavy Land Vehicle"}, {9,"Flying Vehicle"}, {10,"Turret"}, {11,"Device"},
             {12,"Teleporter (Two-Way)"}, {13,"Teleporter (Sender)"}, {14,"Teleporter (Receiver)"}, {15,"Player Spawn"},
             {16,"Player Respawn Zone"}, {17,"Secondary Objective"}, {18,"Primary Objective"}, {19,"Named Location Area"},
             {20,"Danger Zone"}, {25,"Safe Volume"}, {26,"Kill Volume"}, {27,"Cinematic Camera"}
         };
-        private static readonly Dictionary<int, string> TEAMS = new Dictionary<int, string> { 
+        public static readonly Dictionary<int, string> TEAMS = new Dictionary<int, string> { 
             {-1,"Neutral"}, {0,"Red"}, {1,"Blue"}, {2,"Green"}, {3,"Orange"}, {4,"Purple"}, {5,"Gold"}, {6,"Brown"}, {7,"Pink"}, {8,"Neutral"}
         };
     }
@@ -595,13 +729,7 @@ namespace MVARStudio
         public override bool GetStandardValuesExclusive(System.ComponentModel.ITypeDescriptorContext context) => true;
         public override StandardValuesCollection GetStandardValues(System.ComponentModel.ITypeDescriptorContext context)
         {
-            return new StandardValuesCollection(new[] { 
-                "Ordinary", "Weapon", "Grenade", "Projectile", "Powerup", "Equipment", "Ammo Pack",
-                "Light Land Vehicle", "Heavy Land Vehicle", "Flying Vehicle", "Turret", "Device",
-                "Teleporter (Two-Way)", "Teleporter (Sender)", "Teleporter (Receiver)", "Player Spawn",
-                "Player Respawn Zone", "Secondary Objective", "Primary Objective", "Named Location Area",
-                "Danger Zone", "Safe Volume", "Kill Volume", "Cinematic Camera"
-            });
+            return new StandardValuesCollection(ObjectProxy.MP_TYPES.Values.OrderBy(s => s).ToArray());
         }
     }
 
